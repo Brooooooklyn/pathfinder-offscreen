@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use euclid::default::Size2D;
-use gl;
 use image::png::PNGEncoder;
 use image::ColorType;
 use pathfinder_canvas::{CanvasFontContext, CanvasRenderingContext2D, Path2D};
@@ -17,45 +16,55 @@ use pathfinder_color::ColorF;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::rect::RectI;
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
-use pathfinder_gl::{GLDevice, GLVersion};
-use pathfinder_gpu::resources::FilesystemResourceLoader;
+use pathfinder_gl::{GLDevice, GLVersion as pathfinder_glversion};
 use pathfinder_gpu::{Device, RenderTarget, TextureData};
 use pathfinder_renderer::concurrent::rayon::RayonExecutor;
 use pathfinder_renderer::concurrent::scene_proxy::SceneProxy;
 use pathfinder_renderer::gpu::options::{DestFramebuffer, RendererOptions};
 use pathfinder_renderer::gpu::renderer::Renderer;
 use pathfinder_renderer::options::BuildOptions;
-use std::env;
+use pathfinder_resources::embedded::EmbeddedResourceLoader;
 use std::fs::File;
-use std::path::PathBuf;
 
-use offscreen_gl_context::{
-  ColorAttachmentType, GLContext, GLContextAttributes, GLVersion as OffScreenGlVersion,
-  NativeGLContext,
+use surfman::{
+  Connection, ContextAttributeFlags, ContextAttributes, GLVersion, SurfaceAccess, SurfaceType,
 };
 
 fn main() {
   let window_size = Vector2I::new(640, 480);
-  GLContext::<NativeGLContext>::new_shared_with_dispatcher(
-    Size2D::new(window_size.x(), window_size.y()),
-    GLContextAttributes::default(),
-    ColorAttachmentType::default(),
-    sparkle::gl::GlType::Gl,
-    OffScreenGlVersion::MajorMinor(4, 1),
-    None,
-    None,
-  )
-  .unwrap();
+  let connection = Connection::new().unwrap();
 
-  // gl::load_with(|name| GLContext::<NativeGLContext>::get_proc_address(name) as *const _);
+  let adapter = connection.create_hardware_adapter().unwrap();
 
-  let shaders_dir = PathBuf::from(env::current_dir().unwrap());
+  let mut device = connection.create_device(&adapter).unwrap();
+
+  let context_attributes = ContextAttributes {
+    version: GLVersion::new(3, 3),
+    flags: ContextAttributeFlags::empty(),
+  };
+  let context_descriptor = device
+    .create_context_descriptor(&context_attributes)
+    .unwrap();
+  let mut context = device.create_context(&context_descriptor).unwrap();
+  let surface = device
+    .create_surface(
+      &context,
+      SurfaceAccess::GPUOnly,
+      SurfaceType::Generic {
+        size: Size2D::new(window_size.x(), window_size.y()),
+      },
+    )
+    .unwrap();
+  device
+    .bind_surface_to_context(&mut context, surface)
+    .unwrap();
+
+  gl::load_with(|symbol_name| device.get_proc_address(&context, symbol_name));
+  device.make_context_current(&context).unwrap();
   // Create a Pathfinder renderer.
   let mut renderer = Renderer::new(
-    GLDevice::new(GLVersion::GL3, 0),
-    &FilesystemResourceLoader {
-      directory: shaders_dir,
-    },
+    GLDevice::new(pathfinder_glversion::GL3, 0),
+    &EmbeddedResourceLoader::new(),
     DestFramebuffer::full_window(window_size),
     RendererOptions {
       background_color: Some(ColorF::white()),
